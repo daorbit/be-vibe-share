@@ -5,6 +5,7 @@ const SavedPlaylist = require('../models/SavedPlaylist');
 const User = require('../models/User');
 const cloudinary = require('../config/cloudinary');
 const Joi = require('joi');
+const mongoose = require('mongoose');
 
 // Validation schemas
 const createPlaylistSchema = Joi.object({
@@ -12,7 +13,7 @@ const createPlaylistSchema = Joi.object({
   description: Joi.string().allow(''),
   tags: Joi.array().items(Joi.string()).max(5),
   coverGradient: Joi.string().max(100),
-  isPublic: Joi.boolean()
+  isPublic: Joi.boolean().default(true)
 });
 
 const updatePlaylistSchema = Joi.object({
@@ -40,7 +41,11 @@ const getPlaylists = async (req, res) => {
 
     // If a specific user is requested
     if (user) {
-      query.userId = user;
+      // Convert user ID string to ObjectId for MongoDB query
+      query.userId = mongoose.Types.ObjectId.isValid(user) 
+        ? new mongoose.Types.ObjectId(user) 
+        : user;
+      
       // If the requesting user is the same as the user whose playlists are being fetched,
       // show all playlists (public and private). Otherwise, only show public playlists.
       if (!req.user || req.user._id.toString() !== user) {
@@ -60,57 +65,105 @@ const getPlaylists = async (req, res) => {
       sortOption = { likesCount: -1, createdAt: -1 };
     }
 
-    const playlists = await Playlist.find(query)
-      .populate('userId', 'username avatarUrl')
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort(sortOption);
+    // Use aggregation to get playlists with song count in one query
+    const playlists = await Playlist.aggregate([
+      { $match: query },
+      { $sort: sortOption },
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      {
+        $lookup: {
+          from: 'songs',
+          localField: '_id',
+          foreignField: 'playlistId',
+          as: 'songs'
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'userData'
+        }
+      },
+      {
+        $addFields: {
+          songCount: { $size: '$songs' },
+          user: { $arrayElemAt: ['$userData', 0] }
+        }
+      },
+      {
+        $project: {
+          userData: 0,
+          'user.passwordHash': 0
+        }
+      }
+    ]);
 
     const total = await Playlist.countDocuments(query);
 
-    // Add song count and user interaction status to each playlist
-    const playlistsWithDetails = await Promise.all(
-      playlists.map(async (playlist) => {
-        const songCount = await Song.countDocuments({ playlistId: playlist._id });
-        
-        let isLiked = false;
-        let isSaved = false;
-        
-        if (req.user?._id) {
-          // Check if user has liked this playlist
-          const like = await PlaylistLike.findOne({ 
-            userId: req.user._id, 
-            playlistId: playlist._id 
-          });
-          isLiked = !!like;
-          
-          // Check if user has saved this playlist
-          const saved = await SavedPlaylist.findOne({ 
-            userId: req.user._id, 
-            playlistId: playlist._id 
-          });
-          isSaved = !!saved;
-        }
-        
-        return {
-          _id: playlist._id,
-          title: playlist.title,
-          description: playlist.description,
-          coverGradient: playlist.coverGradient,
-          thumbnailUrl: playlist.thumbnailUrl,
-          tags: playlist.tags,
-          likesCount: playlist.likesCount,
-          isPublic: playlist.isPublic,
-          createdAt: playlist.createdAt,
-          updatedAt: playlist.updatedAt,
-          username: playlist.userId.username,
-          userAvatar: playlist.userId.avatarUrl,
-          songCount,
-          isLiked,
-          isSaved
-        };
-      })
-    );
+    // Batch check likes and saves if user is logged in
+    let playlistsWithDetails = playlists;
+    
+    if (req.user?._id && playlists.length > 0) {
+      const playlistIds = playlists.map(p => p._id);
+      
+      // Batch fetch all likes and saves in parallel
+      const [likes, saves] = await Promise.all([
+        PlaylistLike.find({ 
+          userId: req.user._id, 
+          playlistId: { $in: playlistIds }
+        }).lean(),
+        SavedPlaylist.find({ 
+          userId: req.user._id, 
+          playlistId: { $in: playlistIds }
+        }).lean()
+      ]);
+      
+      const likedSet = new Set(likes.map(l => l.playlistId.toString()));
+      const savedSet = new Set(saves.map(s => s.playlistId.toString()));
+      
+      playlistsWithDetails = playlists.map(playlist => ({
+        _id: playlist._id,
+        title: playlist.title,
+        description: playlist.description,
+        coverGradient: playlist.coverGradient,
+        thumbnailUrl: playlist.thumbnailUrl,
+        songs: playlist.songs || [],
+        tags: playlist.tags,
+        likesCount: playlist.likesCount,
+        songCount: playlist.songCount,
+        createdAt: playlist.createdAt,
+        updatedAt: playlist.updatedAt,
+        isPublic: playlist.isPublic,
+        username: playlist.user?.username,
+        userAvatar: playlist.user?.avatarUrl,
+        userId: playlist.userId,
+        isLiked: likedSet.has(playlist._id.toString()),
+        isSaved: savedSet.has(playlist._id.toString())
+      }));
+    } else {
+      playlistsWithDetails = playlists.map(playlist => ({
+        _id: playlist._id,
+        title: playlist.title,
+        description: playlist.description,
+        coverGradient: playlist.coverGradient,
+        thumbnailUrl: playlist.thumbnailUrl,
+        songs: playlist.songs || [],
+        tags: playlist.tags,
+        likesCount: playlist.likesCount,
+        songCount: playlist.songCount,
+        createdAt: playlist.createdAt,
+        updatedAt: playlist.updatedAt,
+        isPublic: playlist.isPublic,
+        username: playlist.user?.username,
+        userAvatar: playlist.user?.avatarUrl,
+        userId: playlist.userId,
+        isLiked: false,
+        isSaved: false
+      }));
+    }
 
     res.json({
       success: true,
@@ -129,7 +182,7 @@ const getPlaylists = async (req, res) => {
     res.status(500).json({ error: 'Failed to get playlists' });
   }
 };
-
+  
 // Create playlist
 const createPlaylist = async (req, res) => {
   try {
@@ -142,7 +195,7 @@ const createPlaylist = async (req, res) => {
       description,
       tags: tags || [],
       coverGradient,
-      isPublic
+      isPublic: isPublic !== undefined ? isPublic : true
     });
 
     await playlist.save();
@@ -176,7 +229,8 @@ const getPlaylist = async (req, res) => {
     }
 
     // Check if private and not owner
-    if (!playlist.isPublic && (!req.user || req.user._id.toString() !== playlist.userId._id.toString())) {
+    // Note: isPublic defaults to true, so only block if explicitly set to false
+    if (playlist.isPublic === false && (!req.user || req.user._id.toString() !== playlist.userId._id.toString())) {
       return res.status(404).json({ error: 'Playlist not found' });
     }
 

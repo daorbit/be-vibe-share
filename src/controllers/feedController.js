@@ -18,48 +18,75 @@ const getFeed = async (req, res) => {
       await mongoose.connect(process.env.MONGODB_URI);
     }
 
-    // Always show all public playlists, sorted by creation date (newest first)
-    const playlists = await Playlist.find({ isPublic: true })
-      .populate('userId', 'username avatarUrl')
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
+    // Use aggregation for better performance
+    const playlists = await Playlist.aggregate([
+      { $match: { isPublic: true } },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      {
+        $lookup: {
+          from: 'songs',
+          localField: '_id',
+          foreignField: 'playlistId',
+          as: 'songsData'
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'userData'
+        }
+      },
+      {
+        $addFields: {
+          songCount: { $size: '$songsData' },
+          user: { $arrayElemAt: ['$userData', 0] }
+        }
+      },
+      {
+        $project: {
+          songsData: 0,
+          userData: 0,
+          'user.passwordHash': 0
+        }
+      }
+    ]);
 
     const total = await Playlist.countDocuments({ isPublic: true });
 
-    // Add song count and user interaction status to each playlist
-    const playlistsWithDetails = await Promise.all(
-      playlists.map(async (playlist) => {
-        const songCount = await Song.countDocuments({ playlistId: playlist._id });
-        
-        let isLiked = false;
-        let isSaved = false;
-        
-        if (userId) {
-          // Check if user has liked this playlist
-          const like = await PlaylistLike.findOne({ 
-            userId: userId, 
-            playlistId: playlist._id 
-          });
-          isLiked = !!like;
-          
-          // Check if user has saved this playlist
-          const saved = await SavedPlaylist.findOne({ 
-            userId: userId, 
-            playlistId: playlist._id 
-          });
-          isSaved = !!saved;
-        }
-        
-        return {
-          ...playlist.toObject(),
-          username: playlist.userId.username,          userAvatar: playlist.userId.avatarUrl,
-          songCount,
-          isLiked,
-          isSaved
-        };
-      })
-    );
+    // Batch check likes and saves
+    let playlistsWithDetails = playlists;
+    
+    if (userId && playlists.length > 0) {
+      const playlistIds = playlists.map(p => p._id);
+      
+      const [likes, saves] = await Promise.all([
+        PlaylistLike.find({ userId, playlistId: { $in: playlistIds } }).lean(),
+        SavedPlaylist.find({ userId, playlistId: { $in: playlistIds } }).lean()
+      ]);
+      
+      const likedSet = new Set(likes.map(l => l.playlistId.toString()));
+      const savedSet = new Set(saves.map(s => s.playlistId.toString()));
+      
+      playlistsWithDetails = playlists.map(playlist => ({
+        ...playlist,
+        username: playlist.user?.username,
+        userAvatar: playlist.user?.avatarUrl,
+        isLiked: likedSet.has(playlist._id.toString()),
+        isSaved: savedSet.has(playlist._id.toString())
+      }));
+    } else {
+      playlistsWithDetails = playlists.map(playlist => ({
+        ...playlist,
+        username: playlist.user?.username,
+        userAvatar: playlist.user?.avatarUrl,
+        isLiked: false,
+        isSaved: false
+      }));
+    }
 
     res.json({
       success: true,

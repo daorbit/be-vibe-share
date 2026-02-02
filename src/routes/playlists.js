@@ -55,7 +55,7 @@ router.post('/', authenticate, validate(createPlaylistSchema), createPlaylist);
 // Get user's saved playlists (must come before /:id route)
 router.get('/saved', authenticate, getSavedPlaylists);
 
-router.get('/:id', getPlaylist);
+router.get('/:id', optionalAuthenticate, getPlaylist);
 router.put('/:id', authenticate, validate(updatePlaylistSchema), updatePlaylist);
 router.post('/:id/thumbnail', authenticate, upload.single('thumbnail'), uploadPlaylistThumbnail);
 router.delete('/:id/thumbnail', authenticate, removePlaylistThumbnail);
