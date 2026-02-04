@@ -5,7 +5,7 @@ const {
   getTrendingPlaylists,
   getPlaylistsByTag
 } = require('../controllers/discoverController');
-const authenticate = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 
 // Routes
 router.get('/users', authenticate, getSuggestedUsers);

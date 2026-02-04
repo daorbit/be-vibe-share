@@ -15,7 +15,7 @@ const {
   // followUser,
   // unfollowUser
 } = require('../controllers/userController');
-const authenticate = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 
 // Configure multer for file uploads
 const upload = multer({

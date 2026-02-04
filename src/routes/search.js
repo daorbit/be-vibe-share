@@ -11,7 +11,7 @@ const {
   clearRecentSearches,
   removeRecentSearch
 } = require('../controllers/searchController');
-const authenticate = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 
 // Universal search
 router.get('/', universalSearch);

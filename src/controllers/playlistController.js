@@ -6,6 +6,7 @@ const User = require('../models/User');
 const cloudinary = require('../config/cloudinary');
 const Joi = require('joi');
 const mongoose = require('mongoose');
+const { createNotification } = require('./notificationController');
 
 // Validation schemas
 const createPlaylistSchema = Joi.object({
@@ -444,6 +445,14 @@ const likePlaylist = async (req, res) => {
       { new: true }
     );
 
+    // Create notification for playlist owner
+    await createNotification({
+      userId: playlist.userId,
+      type: 'playlist_like',
+      actorId: userId,
+      playlistId: id
+    });
+
     console.log('[PLAYLIST_LIKED]', { playlistId: id, userId, timestamp: new Date() });
 
     res.json({
@@ -469,6 +478,14 @@ const unlikePlaylist = async (req, res) => {
     if (!like) {
       return res.status(404).json({ error: 'Like not found' });
     }
+
+    // Delete the notification when unliking
+    const Notification = require('../models/Notification');
+    await Notification.findOneAndDelete({
+      type: 'playlist_like',
+      actorId: userId,
+      playlistId: id
+    }).catch(err => console.error('Delete notification error:', err));
 
     // Update playlist likes count
     const updatedPlaylist = await Playlist.findByIdAndUpdate(
@@ -511,6 +528,14 @@ const savePlaylist = async (req, res) => {
     // Create save
     const save = new SavedPlaylist({ userId, playlistId: id });
     await save.save();
+
+    // Create notification for playlist owner
+    await createNotification({
+      userId: playlist.userId,
+      type: 'playlist_save',
+      actorId: userId,
+      playlistId: id
+    });
 
     res.json({
       success: true,

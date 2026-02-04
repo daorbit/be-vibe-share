@@ -30,8 +30,7 @@ const {
   reorderSongsSchema
 } = require('../controllers/songController');
 const validate = require('../middleware/validation');
-const authenticate = require('../middleware/auth');
-const { optionalAuthenticate } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate } = require('../middleware/auth');
 
 // Configure multer for thumbnail uploads
 const upload = multer({
