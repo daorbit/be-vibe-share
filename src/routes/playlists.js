@@ -25,6 +25,9 @@ const {
   updateSong,
   deleteSong,
   reorderSongs,
+  saveSong,
+  unsaveSong,
+  getSavedSongs,
   updateSongSchema,
   addSongsSchema,
   reorderSongsSchema
@@ -54,6 +57,9 @@ router.post('/', authenticate, validate(createPlaylistSchema), createPlaylist);
 // Get user's saved playlists (must come before /:id route)
 router.get('/saved', authenticate, getSavedPlaylists);
 
+// Get user's saved songs
+router.get('/songs/saved', authenticate, getSavedSongs);
+
 router.get('/:id', optionalAuthenticate, getPlaylist);
 router.put('/:id', authenticate, validate(updatePlaylistSchema), updatePlaylist);
 router.post('/:id/thumbnail', authenticate, upload.single('thumbnail'), uploadPlaylistThumbnail);
@@ -67,6 +73,8 @@ router.delete('/:id/save', authenticate, unsavePlaylist);
 // Song routes
 router.get('/:id/songs', getPlaylistSongs);
 router.post('/:id/songs', authenticate, validate(addSongSchema), addSong);
+router.post('/songs/:id/save', authenticate, saveSong);
+router.delete('/songs/:id/save', authenticate, unsaveSong);
 router.post('/:id/songs/batch', authenticate, validate(addSongsSchema), addSongs);
 router.put('/songs/:id', authenticate, validate(updateSongSchema), updateSong);
 router.delete('/songs/:id', authenticate, deleteSong);

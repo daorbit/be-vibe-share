@@ -1,5 +1,6 @@
 const Song = require('../models/Song');
 const Playlist = require('../models/Playlist');
+const SavedSong = require('../models/SavedSong');
 const Joi = require('joi');
 const { detectPlatform, getYouTubeThumbnail } = require('../services/platformDetector');
 const { fetchThumbnail } = require('../services/thumbnailFetcher');
@@ -277,6 +278,114 @@ const addSongs = async (req, res) => {
   }
 };
 
+// Save song
+const saveSong = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Check if song exists
+    const song = await Song.findById(id);
+    if (!song) {
+      return res.status(404).json({ error: 'Song not found' });
+    }
+
+    // Check if already saved
+    const existingSave = await SavedSong.findOne({ userId, songId: id });
+    if (existingSave) {
+      return res.status(409).json({ error: 'Already saved this song' });
+    }
+
+    // Create save
+    const save = new SavedSong({ userId, songId: id });
+    await save.save();
+
+    res.json({
+      success: true,
+      message: 'Song saved successfully'
+    });
+  } catch (error) {
+    console.error('Save song error:', error);
+    res.status(500).json({ error: 'Failed to save song' });
+  }
+};
+
+// Unsave song
+const unsaveSong = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const save = await SavedSong.findOneAndDelete({ userId, songId: id });
+    if (!save) {
+      return res.status(404).json({ error: 'Save not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Song unsaved successfully'
+    });
+  } catch (error) {
+    console.error('Unsave song error:', error);
+    res.status(500).json({ error: 'Failed to unsave song' });
+  }
+};
+
+// Get user's saved songs
+const getSavedSongs = async (req, res) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+    const skip = (page - 1) * limit;
+
+    const savedSongs = await SavedSong.find({ userId: req.user._id })
+      .populate({
+        path: 'songId',
+        populate: {
+          path: 'playlistId',
+          select: 'title userId',
+          populate: {
+            path: 'userId',
+            select: 'username avatarUrl'
+          }
+        }
+      })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .sort({ createdAt: -1 });
+
+    const total = await SavedSong.countDocuments({ userId: req.user._id });
+
+    // Filter out null songs (in case some were deleted)
+    const validSongs = savedSongs
+      .filter(save => save.songId)
+      .map(save => ({
+        ...save.songId.toObject(),
+        savedAt: save.createdAt,
+        playlistInfo: {
+          id: save.songId.playlistId?._id,
+          title: save.songId.playlistId?.title,
+          owner: save.songId.playlistId?.userId?.username
+        }
+      }));
+
+    res.json({
+      success: true,
+      data: {
+        songs: validSongs,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit)
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get saved songs error:', error);
+    res.status(500).json({ error: 'Failed to get saved songs' });
+  }
+};
+
 module.exports = {
   getPlaylistSongs,
   addSong,
@@ -284,6 +393,9 @@ module.exports = {
   updateSong,
   deleteSong,
   reorderSongs,
+  saveSong,
+  unsaveSong,
+  getSavedSongs,
   updateSongSchema,
   addSongsSchema,
   reorderSongsSchema

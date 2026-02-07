@@ -1,9 +1,27 @@
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 
+// Helper function to cleanup old notifications (5 days)
+const cleanupOldNotifications = async () => {
+  try {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const result = await Notification.deleteMany({
+      createdAt: { $lt: fiveDaysAgo }
+    });
+    if (result.deletedCount > 0) {
+      console.log(`Cleaned up ${result.deletedCount} old notifications`);
+    }
+  } catch (error) {
+    console.error('Cleanup old notifications error:', error);
+  }
+};
+
 // Get user notifications
 const getNotifications = async (req, res) => {
   try {
+    // Run cleanup in background (non-blocking)
+    cleanupOldNotifications().catch(err => console.error('Background cleanup error:', err));
+
     const { page = 1, limit = 20, unreadOnly = false } = req.query;
     const skip = (page - 1) * limit;
 
